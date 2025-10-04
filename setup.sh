@@ -1,738 +1,342 @@
-#!/bin/bash
+@echo off
+REM StudyMaster AI - Windows Setup Script
+REM Run this script to set up the complete project
 
-# StudyMaster AI - Automated Setup Script
-# This script creates the complete project structure with all files
+echo ============================================
+echo StudyMaster AI - Automated Setup (Windows)
+echo ============================================
+echo.
 
-set -e  # Exit on error
-
-echo "🎓 StudyMaster AI - Automated Setup"
-echo "===================================="
-echo ""
-
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Check if we're in the right directory
-if [ ! -d ".git" ]; then
-    echo -e "${YELLOW}Warning: Not in a git repository. Make sure you're in STUDYTOOL folder.${NC}"
-    echo "Creating project structure anyway..."
-fi
-
-echo -e "${BLUE}📁 Creating folder structure...${NC}"
-
-# Create backend structure
-mkdir -p backend/modules/parsers
-mkdir -p backend/modules/ai
-mkdir -p backend/modules/flashcards
-mkdir -p backend/modules/scheduler
-mkdir -p backend/modules/analytics
-mkdir -p backend/modules/exporters
-mkdir -p backend/database
-mkdir -p backend/api
-mkdir -p backend/tests
-
-echo -e "${GREEN}✓ Backend folders created${NC}"
-
-# ============================================
-# CREATE BACKEND FILES
-# ============================================
-
-echo -e "${BLUE}📝 Creating backend files...${NC}"
-
-# requirements.txt
-cat > backend/requirements.txt << 'EOF'
-fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.5.0
-sqlalchemy==2.0.23
-PyPDF2==3.0.1
-python-docx==1.1.0
-python-pptx==0.6.23
-youtube-transcript-api==0.6.1
-openai==1.3.0
-python-multipart==0.0.6
-aiofiles==23.2.1
-pytest==7.4.3
-pytest-asyncio==0.21.1
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-EOF
-
-# Create all __init__.py files
-touch backend/modules/__init__.py
-touch backend/modules/parsers/__init__.py
-touch backend/modules/ai/__init__.py
-touch backend/modules/flashcards/__init__.py
-touch backend/modules/scheduler/__init__.py
-touch backend/modules/analytics/__init__.py
-touch backend/modules/exporters/__init__.py
-touch backend/database/__init__.py
-touch backend/api/__init__.py
-touch backend/tests/__init__.py
-
-# config.py
-cat > backend/config.py << 'EOF'
-import os
-
-class Config:
-    """Application configuration."""
-    
-    # API Keys
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-    
-    # Database
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///study_tool.db")
-    
-    # File Upload
-    MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
-    ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.pptx', '.ppt'}
-    
-    # AI Settings
-    AI_MODEL = "gpt-4o-mini"
-    MAX_TOKENS = 4000
-    TEMPERATURE = 0.7
-    
-    # Spaced Repetition
-    MIN_EASINESS = 1.3
-    DEFAULT_EASINESS = 2.5
-    
-    # Study Schedule
-    DEFAULT_STUDY_MINUTES = 30
-    DEFAULT_DAYS_PER_WEEK = 5
-EOF
-
-# .env.example
-cat > backend/.env.example << 'EOF'
-OPENAI_API_KEY=your_openai_api_key_here
-DATABASE_URL=sqlite:///study_tool.db
-EOF
-
-# PDF Parser
-cat > backend/modules/parsers/pdf_parser.py << 'EOF'
-import PyPDF2
-from typing import Dict, List
-import re
-
-class PDFParser:
-    """Extract and parse content from PDF files."""
-    
-    def __init__(self):
-        self.supported_formats = ['.pdf']
-    
-    def extract_text(self, file_path: str) -> Dict[str, any]:
-        """Extract all text and metadata from PDF."""
-        try:
-            with open(file_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                
-                metadata = {
-                    'title': reader.metadata.title if reader.metadata else None,
-                    'author': reader.metadata.author if reader.metadata else None,
-                    'pages': len(reader.pages)
-                }
-                
-                full_text = ""
-                pages_content = []
-                
-                for i, page in enumerate(reader.pages):
-                    page_text = page.extract_text()
-                    full_text += page_text + "\n"
-                    pages_content.append({
-                        'page_number': i + 1,
-                        'content': page_text
-                    })
-                
-                headings = self._extract_headings(full_text)
-                
-                return {
-                    'success': True,
-                    'metadata': metadata,
-                    'full_text': full_text,
-                    'pages': pages_content,
-                    'headings': headings,
-                    'word_count': len(full_text.split())
-                }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-    
-    def _extract_headings(self, text: str) -> List[str]:
-        """Extract potential headings from text."""
-        lines = text.split('\n')
-        headings = []
-        
-        for line in lines:
-            line = line.strip()
-            if line and (
-                line.isupper() and len(line.split()) < 10 or
-                re.match(r'^\d+\.?\s+[A-Z]', line) or
-                re.match(r'^Chapter\s+\d+', line, re.IGNORECASE)
-            ):
-                headings.append(line)
-        
-        return headings
-EOF
-
-# DOCX Parser
-cat > backend/modules/parsers/docx_parser.py << 'EOF'
-from docx import Document
-from typing import Dict, List
-
-class DOCXParser:
-    """Extract and parse content from Word documents."""
-    
-    def __init__(self):
-        self.supported_formats = ['.docx', '.doc']
-    
-    def extract_text(self, file_path: str) -> Dict[str, any]:
-        """Extract text, headings, and structure from DOCX."""
-        try:
-            doc = Document(file_path)
-            
-            full_text = ""
-            headings = []
-            paragraphs_data = []
-            
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if text:
-                    full_text += text + "\n"
-                    
-                    if para.style.name.startswith('Heading'):
-                        headings.append({
-                            'level': para.style.name,
-                            'text': text
-                        })
-                    
-                    paragraphs_data.append({
-                        'text': text,
-                        'style': para.style.name
-                    })
-            
-            tables_data = []
-            for table in doc.tables:
-                table_content = []
-                for row in table.rows:
-                    row_data = [cell.text for cell in row.cells]
-                    table_content.append(row_data)
-                tables_data.append(table_content)
-            
-            return {
-                'success': True,
-                'full_text': full_text,
-                'headings': headings,
-                'paragraphs': paragraphs_data,
-                'tables': tables_data,
-                'word_count': len(full_text.split())
-            }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-EOF
-
-# PPTX Parser
-cat > backend/modules/parsers/pptx_parser.py << 'EOF'
-from pptx import Presentation
-from typing import Dict, List
-
-class PPTXParser:
-    """Extract and parse content from PowerPoint presentations."""
-    
-    def __init__(self):
-        self.supported_formats = ['.pptx', '.ppt']
-    
-    def extract_text(self, file_path: str) -> Dict[str, any]:
-        """Extract text and structure from PowerPoint."""
-        try:
-            prs = Presentation(file_path)
-            
-            slides_content = []
-            full_text = ""
-            
-            for i, slide in enumerate(prs.slides):
-                slide_data = {
-                    'slide_number': i + 1,
-                    'title': '',
-                    'content': [],
-                    'notes': ''
-                }
-                
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        text = shape.text.strip()
-                        if text:
-                            if not slide_data['title'] and shape.shape_type == 1:
-                                slide_data['title'] = text
-                            else:
-                                slide_data['content'].append(text)
-                            full_text += text + "\n"
-                
-                if slide.has_notes_slide:
-                    notes_frame = slide.notes_slide.notes_text_frame
-                    if notes_frame:
-                        slide_data['notes'] = notes_frame.text
-                        full_text += slide_data['notes'] + "\n"
-                
-                slides_content.append(slide_data)
-            
-            return {
-                'success': True,
-                'full_text': full_text,
-                'slides': slides_content,
-                'slide_count': len(slides_content),
-                'word_count': len(full_text.split())
-            }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-EOF
-
-# YouTube Parser
-cat > backend/modules/parsers/youtube_parser.py << 'EOF'
-from youtube_transcript_api import YouTubeTranscriptApi
-import re
-from typing import Dict
-
-class YouTubeParser:
-    """Extract transcripts from YouTube videos."""
-    
-    def __init__(self):
-        pass
-    
-    def extract_transcript(self, url: str) -> Dict[str, any]:
-        """Extract transcript from YouTube video URL."""
-        try:
-            video_id = self._extract_video_id(url)
-            
-            if not video_id:
-                return {'success': False, 'error': 'Invalid YouTube URL'}
-            
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            
-            full_text = " ".join([item['text'] for item in transcript_list])
-            
-            segments = []
-            for item in transcript_list:
-                segments.append({
-                    'start': item['start'],
-                    'duration': item['duration'],
-                    'text': item['text']
-                })
-            
-            return {
-                'success': True,
-                'video_id': video_id,
-                'full_text': full_text,
-                'segments': segments,
-                'word_count': len(full_text.split())
-            }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-    
-    def _extract_video_id(self, url: str) -> str:
-        """Extract video ID from various YouTube URL formats."""
-        patterns = [
-            r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)',
-            r'youtube\.com\/embed\/([^&\n?#]+)',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
-        
-        return None
-EOF
-
-echo -e "${GREEN}✓ Parser modules created${NC}"
-
-# Create AI modules placeholder (condensed for script length)
-cat > backend/modules/ai/summarizer.py << 'EOF'
-from openai import OpenAI
-from typing import Dict, List
-
-class ContentSummarizer:
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o-mini"
-    
-    def summarize(self, text: str, summary_type: str = "detailed") -> Dict[str, any]:
-        try:
-            prompts = {
-                'brief': f"Provide a brief 2-3 sentence summary of this text:\n\n{text[:4000]}",
-                'detailed': f"Provide a detailed summary with key points:\n\n{text[:4000]}",
-                'bullet': f"Extract main points as bullets:\n\n{text[:4000]}"
-            }
-            
-            prompt = prompts.get(summary_type, prompts['detailed'])
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are an expert at summarizing educational content."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.5
-            )
-            
-            return {
-                'success': True,
-                'summary': response.choices[0].message.content,
-                'type': summary_type
-            }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-EOF
-
-cat > backend/modules/ai/flashcard_generator.py << 'EOF'
-from openai import OpenAI
-from typing import Dict, List
-import json
-
-class FlashcardGenerator:
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o-mini"
-    
-    def generate_flashcards(self, text: str, count: int = 10, card_types: List[str] = None) -> List[Dict]:
-        if card_types is None:
-            card_types = ['basic', 'cloze']
-        
-        try:
-            prompt = f"""Generate {count} flashcards from this text as JSON array:
-[{{"type": "basic", "front": "Q", "back": "A", "tags": []}}]
-
-Text: {text[:5000]}"""
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You create educational flashcards."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7
-            )
-            
-            content = response.choices[0].message.content
-            if '```json' in content:
-                content = content.split('```json')[1].split('```')[0]
-            
-            return json.loads(content.strip())
-        except Exception as e:
-            print(f"Error: {e}")
-            return []
-EOF
-
-cat > backend/modules/ai/question_generator.py << 'EOF'
-from openai import OpenAI
-from typing import Dict, List
-import json
-
-class QuestionGenerator:
-    def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o-mini"
-    
-    def generate_questions(self, text: str, difficulty: str = "medium") -> List[Dict]:
-        try:
-            prompt = f"Generate 10 {difficulty} questions as JSON from: {text[:5000]}"
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "Educational content expert."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7
-            )
-            
-            content = response.choices[0].message.content
-            if '```json' in content:
-                content = content.split('```json')[1].split('```')[0]
-            
-            return json.loads(content.strip())
-        except:
-            return []
-EOF
-
-echo -e "${GREEN}✓ AI modules created${NC}"
-
-# Create essential API file
-cat > backend/api/main.py << 'EOF'
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-import os
-import sys
-
-# Add parent directory to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from modules.parsers.pdf_parser import PDFParser
-from modules.parsers.docx_parser import DOCXParser
-from modules.parsers.pptx_parser import PPTXParser
-from modules.parsers.youtube_parser import YouTubeParser
-
-app = FastAPI(title="StudyMaster AI API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+REM Check if Python is installed
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Python is not installed or not in PATH
+    echo Please install Python 3.8+ from https://www.python.org/
+    pause
+    exit /b 1
 )
 
-# Initialize parsers
-pdf_parser = PDFParser()
-docx_parser = DOCXParser()
-pptx_parser = PPTXParser()
-youtube_parser = YouTubeParser()
+REM Check if Node.js is installed
+node --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Node.js is not installed or not in PATH
+    echo Please install Node.js from https://nodejs.org/
+    pause
+    exit /b 1
+)
 
-@app.get("/")
-async def root():
-    return {
-        "message": "StudyMaster AI API",
-        "version": "1.0.0",
-        "status": "running"
-    }
+echo [1/6] Creating backend folder structure...
+mkdir backend\modules\parsers 2>nul
+mkdir backend\modules\ai 2>nul
+mkdir backend\modules\flashcards 2>nul
+mkdir backend\modules\scheduler 2>nul
+mkdir backend\modules\analytics 2>nul
+mkdir backend\modules\exporters 2>nul
+mkdir backend\database 2>nul
+mkdir backend\api 2>nul
+mkdir backend\tests 2>nul
+echo    Done!
 
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+echo [2/6] Creating backend files...
 
-# Add more endpoints as needed
-EOF
+REM Create requirements.txt
+(
+echo fastapi==0.104.1
+echo uvicorn==0.24.0
+echo pydantic==2.5.0
+echo sqlalchemy==2.0.23
+echo PyPDF2==3.0.1
+echo python-docx==1.1.0
+echo python-pptx==0.6.23
+echo youtube-transcript-api==0.6.1
+echo openai==1.3.0
+echo python-multipart==0.0.6
+echo aiofiles==23.2.1
+echo pytest==7.4.3
+) > backend\requirements.txt
 
-echo -e "${GREEN}✓ API created${NC}"
+REM Create __init__.py files
+type nul > backend\modules\__init__.py
+type nul > backend\modules\parsers\__init__.py
+type nul > backend\modules\ai\__init__.py
+type nul > backend\modules\flashcards\__init__.py
+type nul > backend\modules\scheduler\__init__.py
+type nul > backend\modules\analytics\__init__.py
+type nul > backend\modules\exporters\__init__.py
+type nul > backend\database\__init__.py
+type nul > backend\api\__init__.py
+type nul > backend\tests\__init__.py
 
-# Create simple database models
-cat > backend/database/models.py << 'EOF'
-from sqlalchemy import Column, Integer, String, DateTime, Float, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from datetime import datetime
+REM Create config.py
+(
+echo import os
+echo.
+echo class Config:
+echo     OPENAI_API_KEY = os.getenv^("OPENAI_API_KEY", ""^)
+echo     DATABASE_URL = os.getenv^("DATABASE_URL", "sqlite:///study_tool.db"^)
+echo     MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+echo     AI_MODEL = "gpt-4o-mini"
+) > backend\config.py
 
-Base = declarative_base()
+REM Create .env.example
+(
+echo OPENAI_API_KEY=your_openai_api_key_here
+echo DATABASE_URL=sqlite:///study_tool.db
+) > backend\.env.example
 
-class User(Base):
-    __tablename__ = 'users'
-    id = Column(String, primary_key=True)
-    username = Column(String, unique=True)
-    email = Column(String, unique=True)
-    created_at = Column(DateTime, default=datetime.now)
+REM Create PDF Parser
+(
+echo import PyPDF2
+echo from typing import Dict, List
+echo import re
+echo.
+echo class PDFParser:
+echo     def __init__^(self^):
+echo         self.supported_formats = ['.pdf']
+echo.
+echo     def extract_text^(self, file_path: str^) -^> Dict:
+echo         try:
+echo             with open^(file_path, 'rb'^) as file:
+echo                 reader = PyPDF2.PdfReader^(file^)
+echo                 full_text = ""
+echo                 for page in reader.pages:
+echo                     full_text += page.extract_text^(^) + "\n"
+echo                 return {'success': True, 'full_text': full_text}
+echo         except Exception as e:
+echo             return {'success': False, 'error': str^(e^)}
+) > backend\modules\parsers\pdf_parser.py
 
-class Deck(Base):
-    __tablename__ = 'decks'
-    id = Column(String, primary_key=True)
-    name = Column(String)
-    description = Column(String)
-    created_at = Column(DateTime, default=datetime.now)
-EOF
+REM Create DOCX Parser
+(
+echo from docx import Document
+echo from typing import Dict
+echo.
+echo class DOCXParser:
+echo     def __init__^(self^):
+echo         self.supported_formats = ['.docx', '.doc']
+echo.
+echo     def extract_text^(self, file_path: str^) -^> Dict:
+echo         try:
+echo             doc = Document^(file_path^)
+echo             full_text = "\n".join^([para.text for para in doc.paragraphs]^)
+echo             return {'success': True, 'full_text': full_text}
+echo         except Exception as e:
+echo             return {'success': False, 'error': str^(e^)}
+) > backend\modules\parsers\docx_parser.py
 
-echo -e "${GREEN}✓ Database models created${NC}"
+REM Create PPTX Parser
+(
+echo from pptx import Presentation
+echo from typing import Dict
+echo.
+echo class PPTXParser:
+echo     def __init__^(self^):
+echo         self.supported_formats = ['.pptx', '.ppt']
+echo.
+echo     def extract_text^(self, file_path: str^) -^> Dict:
+echo         try:
+echo             prs = Presentation^(file_path^)
+echo             full_text = ""
+echo             for slide in prs.slides:
+echo                 for shape in slide.shapes:
+echo                     if hasattr^(shape, "text"^):
+echo                         full_text += shape.text + "\n"
+echo             return {'success': True, 'full_text': full_text}
+echo         except Exception as e:
+echo             return {'success': False, 'error': str^(e^)}
+) > backend\modules\parsers\pptx_parser.py
 
-# ============================================
-# CREATE FRONTEND
-# ============================================
+REM Create YouTube Parser
+(
+echo from youtube_transcript_api import YouTubeTranscriptApi
+echo import re
+echo from typing import Dict
+echo.
+echo class YouTubeParser:
+echo     def extract_transcript^(self, url: str^) -^> Dict:
+echo         try:
+echo             video_id = self._extract_video_id^(url^)
+echo             if not video_id:
+echo                 return {'success': False, 'error': 'Invalid URL'}
+echo             transcript = YouTubeTranscriptApi.get_transcript^(video_id^)
+echo             full_text = " ".join^([item['text'] for item in transcript]^)
+echo             return {'success': True, 'full_text': full_text}
+echo         except Exception as e:
+echo             return {'success': False, 'error': str^(e^)}
+echo.
+echo     def _extract_video_id^(self, url: str^):
+echo         match = re.search^(r'(?:v=^|youtu.be/^)^([^&\n?#]+^)', url^)
+echo         return match.group^(1^) if match else None
+) > backend\modules\parsers\youtube_parser.py
 
-echo -e "${BLUE}⚛️  Setting up React frontend...${NC}"
+REM Create main API file
+(
+echo from fastapi import FastAPI, UploadFile, File
+echo from fastapi.middleware.cors import CORSMiddleware
+echo import sys
+echo import os
+echo sys.path.insert^(0, os.path.dirname^(os.path.abspath^(__file__^)^)^)
+echo.
+echo app = FastAPI^(title="StudyMaster AI"^)
+echo.
+echo app.add_middleware^(
+echo     CORSMiddleware,
+echo     allow_origins=["http://localhost:3000"],
+echo     allow_credentials=True,
+echo     allow_methods=["*"],
+echo     allow_headers=["*"]
+echo ^)
+echo.
+echo @app.get^("/")
+echo async def root^(^):
+echo     return {"message": "StudyMaster AI API", "version": "1.0.0"}
+echo.
+echo @app.get^("/health"^)
+echo async def health^(^):
+echo     return {"status": "healthy"}
+) > backend\api\main.py
 
-if command -v npx &> /dev/null; then
-    npx create-react-app frontend --template minimal
-    
-    cd frontend
-    
-    # Install dependencies
-    echo -e "${BLUE}📦 Installing frontend dependencies...${NC}"
-    npm install lucide-react
-    npm install -D tailwindcss postcss autoprefixer
-    npx tailwindcss init -p
-    
-    # Create tailwind.config.js
-    cat > tailwind.config.js << 'EOFJS'
-module.exports = {
-  content: ["./src/**/*.{js,jsx,ts,tsx}"],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}
-EOFJS
+echo    Done!
 
-    # Create src/index.css
-    cat > src/index.css << 'EOFCSS'
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-EOFCSS
-
-    # Create src/index.js
-    cat > src/index.js << 'EOFJS'
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import App from './App';
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-EOFJS
-
-    # Remove default files
-    rm -f src/App.js src/App.css src/App.test.js src/logo.svg src/reportWebVitals.js src/setupTests.js 2>/dev/null || true
-    
-    # Create simple App.jsx
-    cat > src/App.jsx << 'EOFAPP'
-import React, { useState } from 'react';
-import { Brain, Upload, BarChart3 } from 'lucide-react';
-
-const StudyToolApp = () => {
-  const [activeTab, setActiveTab] = useState('upload');
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Brain className="w-8 h-8 text-indigo-600" />
-              <h1 className="text-2xl font-bold text-gray-900">StudyMaster AI</h1>
-            </div>
-            <nav className="flex space-x-4">
-              <button onClick={() => setActiveTab('upload')} 
-                className={`px-4 py-2 rounded-lg ${activeTab === 'upload' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}>
-                Upload
-              </button>
-              <button onClick={() => setActiveTab('study')}
-                className={`px-4 py-2 rounded-lg ${activeTab === 'study' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}>
-                Study
-              </button>
-              <button onClick={() => setActiveTab('analytics')}
-                className={`px-4 py-2 rounded-lg ${activeTab === 'analytics' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}>
-                Analytics
-              </button>
-            </nav>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        <div className="bg-white rounded-xl shadow-lg p-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">Welcome to StudyMaster AI! 🎓</h2>
-          <p className="text-gray-600 mb-6">
-            Upload your study materials (PDF, Word, PowerPoint, or YouTube) to generate AI-powered flashcards.
-          </p>
-          
-          <div className="grid md:grid-cols-3 gap-6 mt-8">
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-indigo-500 transition">
-              <Upload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-              <h3 className="font-semibold mb-2">Upload Documents</h3>
-              <p className="text-sm text-gray-600">PDF, Word, PowerPoint</p>
-            </div>
-            
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-indigo-500 transition">
-              <Brain className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-              <h3 className="font-semibold mb-2">AI Generation</h3>
-              <p className="text-sm text-gray-600">Auto-create flashcards</p>
-            </div>
-            
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-indigo-500 transition">
-              <BarChart3 className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-              <h3 className="font-semibold mb-2">Track Progress</h3>
-              <p className="text-sm text-gray-600">Analytics & insights</p>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-};
-
-export default StudyToolApp;
-EOFAPP
-
-    cd ..
-    echo -e "${GREEN}✓ Frontend created${NC}"
-else
-    echo -e "${YELLOW}⚠ npx not found. Please install Node.js and run: npx create-react-app frontend${NC}"
-fi
-
-# ============================================
-# CREATE ROOT README
-# ============================================
-
-cat > README.md << 'EOF'
-# 🎓 StudyMaster AI
-
-AI-powered study tool with flashcards, spaced repetition, and content extraction.
-
-## Quick Start
-
-```bash
-# Backend
+echo [3/6] Setting up Python virtual environment...
 cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-export OPENAI_API_KEY="your-key"
-uvicorn api.main:app --reload
+python -m venv venv
+echo    Done!
 
-# Frontend (new terminal)
+echo [4/6] Installing Python dependencies...
+call venv\Scripts\activate.bat
+pip install -q -r requirements.txt
+if errorlevel 1 (
+    echo    WARNING: Some packages may have failed to install
+) else (
+    echo    Done!
+)
+cd ..
+
+echo [5/6] Creating React frontend...
+call npx create-react-app frontend
 cd frontend
-npm install
-npm start
-```
 
-## Features
+echo [6/6] Installing frontend dependencies...
+call npm install lucide-react
+call npm install -D tailwindcss postcss autoprefixer
+call npx tailwindcss init -p
 
-- Multi-format support (PDF, Word, PPT, YouTube)
-- AI flashcard generation
-- Spaced repetition (SM-2)
-- Progress analytics
-- Export to Anki/CSV
+REM Create tailwind.config.js
+(
+echo module.exports = {
+echo   content: ["./src/**/*.{js,jsx,ts,tsx}"],
+echo   theme: { extend: {} },
+echo   plugins: [],
+echo }
+) > tailwind.config.js
 
-## Access
+REM Create src\index.css
+(
+echo @tailwind base;
+echo @tailwind components;
+echo @tailwind utilities;
+) > src\index.css
 
-- Frontend: http://localhost:3000
-- API: http://localhost:8000
-- Docs: http://localhost:8000/docs
-EOF
+REM Create src\index.js
+(
+echo import React from 'react';
+echo import ReactDOM from 'react-dom/client';
+echo import './index.css';
+echo import App from './App';
+echo.
+echo const root = ReactDOM.createRoot^(document.getElementById^('root'^)^);
+echo root.render^(
+echo   ^<React.StrictMode^>
+echo     ^<App /^>
+echo   ^</React.StrictMode^>
+echo ^);
+) > src\index.js
 
-# Create .gitignore
-cat > .gitignore << 'EOF'
-__pycache__/
-*.pyc
-venv/
-env/
-node_modules/
-build/
-.env
-*.db
-.DS_Store
-EOF
+REM Delete default files
+del src\App.js 2>nul
+del src\App.css 2>nul
+del src\App.test.js 2>nul
+del src\logo.svg 2>nul
 
-echo ""
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}✅ Setup Complete!${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo ""
-echo -e "${BLUE}Next steps:${NC}"
-echo "1. Set your OpenAI API key:"
-echo "   export OPENAI_API_KEY='your-key-here'"
-echo ""
-echo "2. Start the backend:"
-echo "   cd backend"
-echo "   python3 -m venv venv"
-echo "   source venv/bin/activate"
-echo "   pip install -r requirements.txt"
-echo "   uvicorn api.main:app --reload"
-echo ""
-echo "3. Start the frontend (in new terminal):"
-echo "   cd frontend"
-echo "   npm start"
-echo ""
-echo -e "${GREEN}🚀 Your StudyMaster AI is ready!${NC}"
+REM Create simplified App.jsx
+(
+echo import React, { useState } from 'react';
+echo import { Brain, Upload, BarChart3 } from 'lucide-react';
+echo.
+echo const StudyToolApp = ^(^) =^> {
+echo   const [activeTab, setActiveTab] = useState^('upload'^);
+echo.
+echo   return ^(
+echo     ^<div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100"^>
+echo       ^<header className="bg-white shadow-sm"^>
+echo         ^<div className="max-w-7xl mx-auto px-4 py-4"^>
+echo           ^<div className="flex items-center space-x-3"^>
+echo             ^<Brain className="w-8 h-8 text-indigo-600" /^>
+echo             ^<h1 className="text-2xl font-bold"^>StudyMaster AI^</h1^>
+echo           ^</div^>
+echo         ^</div^>
+echo       ^</header^>
+echo       ^<main className="max-w-7xl mx-auto px-4 py-8"^>
+echo         ^<div className="bg-white rounded-xl shadow-lg p-8"^>
+echo           ^<h2 className="text-3xl font-bold mb-4"^>Welcome! 🎓^</h2^>
+echo           ^<p^>Upload study materials to generate flashcards.^</p^>
+echo         ^</div^>
+echo       ^</main^>
+echo     ^</div^>
+echo   ^);
+echo };
+echo.
+echo export default StudyToolApp;
+) > src\App.jsx
+
+cd ..
+
+REM Update root README
+(
+echo # StudyMaster AI
+echo.
+echo AI-powered study tool
+echo.
+echo ## Quick Start
+echo.
+echo ### Backend
+echo ```
+echo cd backend
+echo venv\Scripts\activate
+echo set OPENAI_API_KEY=your-key
+echo uvicorn api.main:app --reload
+echo ```
+echo.
+echo ### Frontend
+echo ```
+echo cd frontend
+echo npm start
+echo ```
+echo.
+echo Access: http://localhost:3000
+) > README.md
+
+echo.
+echo ============================================
+echo          Setup Complete!
+echo ============================================
+echo.
+echo Next steps:
+echo.
+echo 1. Set your OpenAI API key:
+echo    set OPENAI_API_KEY=your-key-here
+echo.
+echo 2. Start backend (Terminal 1):
+echo    cd backend
+echo    venv\Scripts\activate
+echo    uvicorn api.main:app --reload
+echo.
+echo 3. Start frontend (Terminal 2):
+echo    cd frontend
+echo    npm start
+echo.
+echo Your app will be at: http://localhost:3000
+echo API docs at: http://localhost:8000/docs
+echo.
+pause
